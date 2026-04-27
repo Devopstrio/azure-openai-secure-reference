@@ -1,0 +1,62 @@
+name: 'Azure OpenAI Secure CD'
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/**'
+      - 'backend/**'
+      - 'terraform/**'
+      - '.github/workflows/release.yml'
+
+jobs:
+  validate-and-test:
+    name: 'AI Logic Validation'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Source
+      uses: actions/checkout@v3
+
+    - name: Run Pytest
+      run: |
+        pip install pytest fastapi httpx
+        pytest tests/
+
+  build-and-push:
+    name: 'AI Platform Release'
+    needs: validate-and-test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Azure CLI Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Build & Push AOAI API
+      run: |
+        az acr login --name acraoai
+        docker build -t acraoai.azurecr.io/devopstrio/aoai-gateway-api:${{ github.sha }} ./backend
+        docker push acraoai.azurecr.io/devopstrio/aoai-gateway-api:${{ github.sha }}
+
+    - name: Build & Push RAG Engine
+      run: |
+        docker build -t acraoai.azurecr.io/devopstrio/rag-engine:${{ github.sha }} ./apps/rag-engine
+        docker push acraoai.azurecr.io/devopstrio/rag-engine:${{ github.sha }}
+
+  aks-rollout:
+    name: 'Deployment to AI Cluster'
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+    - name: AKS Set Context
+      uses: azure/aks-set-context@v3
+      with:
+        resource-group: 'rg-aoai-secure-prd-uks-01'
+        cluster-name: 'aks-ai-platform-prd'
+
+    - name: Helm Upgrade
+      run: |
+        helm upgrade --install aoai-platform ./helm/azure-openai-secure-reference \
+        --namespace ai-platform-prod --create-namespace \
+        --set api.image.tag=${{ github.sha }}

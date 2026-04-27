@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aoai-gateway-api
+  namespace: ai-platform-prod
+  labels:
+    app: aoai-api
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: aoai-api
+  template:
+    metadata:
+      labels:
+        app: aoai-api
+    spec:
+      containers:
+      - name: gateway
+        image: acraoai.azurecr.io/devopstrio/aoai-gateway-api:v1.0.0
+        ports:
+        - containerPort: 8000
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: ai-secrets
+              key: db-url
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ai-secrets
+              key: openai-key
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2000m"
+            memory: "2Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aoai-api-svc
+  namespace: ai-platform-prod
+spec:
+  selector:
+    app: aoai-api
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8000
+  type: LoadBalancer
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-engine
+  namespace: ai-platform-prod
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      component: rag-engine
+  template:
+    metadata:
+      labels:
+        component: rag-engine
+    spec:
+      containers:
+      - name: engine
+        image: acraoai.azurecr.io/devopstrio/rag-engine:latest
+        resources:
+          requests:
+            cpu: "1000m"
+            memory: "2Gi"
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: aoai-ingress
+  namespace: ai-platform-prod
+  annotations:
+    kubernetes.io/ingress.class: nginx
+spec:
+  rules:
+  - host: ai.devopstrio.co.uk
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: aoai-api-svc
+            port:
+              number: 80
